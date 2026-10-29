@@ -1,0 +1,34 @@
+{{- if .Values.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .Values.persistence.pvName }}
+  labels:
+    {{- include "quakewatch-chart.labels" . | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ .Values.persistence.storageSize }}
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: {{ .Values.persistence.hostPath | quote }}
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.persistence.pvcName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "quakewatch-chart.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  volumeName: {{ .Values.persistence.pvName }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.storageSize }}
+{{- end }}

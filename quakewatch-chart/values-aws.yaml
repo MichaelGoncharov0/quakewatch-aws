@@ -1,0 +1,9 @@
+# Overrides for running the chart on k3s on a single EC2 instance (see terraform/).
+# Use it on top of values.yaml:
+#   helm install quakewatch ./quakewatch-chart -n quakewatch --create-namespace -f quakewatch-chart/values-aws.yaml
+
+service:
+  # k3s's built-in ServiceLB binds a LoadBalancer service straight to port 80 on the node,
+  # so no AWS load balancer (ALB/NLB) is created. The security group limits who can reach it.
+  type: LoadBalancer
+  port: 80

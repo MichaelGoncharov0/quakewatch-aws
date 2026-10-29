@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# App runtime
+logs/
+
+# Helm
+quakewatch-chart/charts/
+*.tgz
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

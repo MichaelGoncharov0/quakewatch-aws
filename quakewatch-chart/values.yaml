@@ -1,0 +1,170 @@
+# Default values for quakewatch-chart.
+# All namespaced resources are created in the Helm release namespace:
+#   helm upgrade --install quakewatch ./quakewatch-chart -n quakewatch --create-namespace
+
+app:
+  name: quakewatch
+
+# Used only when autoscaling.enabled is false (otherwise the HPA owns the replica count).
+replicaCount: 4
+
+image:
+  repository: michaelgoncharov0/quakewatch
+  # This sets the pull policy for images.
+  pullPolicy: Always
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: latest
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: quakewatch
+
+serviceAccount:
+  # Create a dedicated service account (otherwise the namespace "default" one is used)
+  create: false
+  automount: true
+  annotations: {}
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  name: quakewatch-service
+  type: NodePort
+  port: 80
+  targetPort: 5000
+  # Only used when type is NodePort
+  nodePort: 30080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: quakewatch.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: quakewatch-tls
+  #    hosts:
+  #      - quakewatch.local
+
+# Expose the service via Gateway API HTTPRoute
+# (requires Gateway API CRDs and a gateway controller in the cluster)
+httpRoute:
+  enabled: false
+  annotations: {}
+  parentRefs:
+    - name: gateway
+      sectionName: http
+  hostnames:
+    - quakewatch.local
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 5000
+  initialDelaySeconds: 20
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 5000
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+# Additional volumes / volumeMounts on the Deployment
+volumes: []
+volumeMounts: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+configMap:
+  name: quakewatch-config
+
+secret:
+  name: quakewatch-secret
+
+hpa:
+  name: quakewatch-hpa
+
+priorityClass:
+  enabled: true
+  name: quakewatch-priority
+  value: 100000
+  description: "Priority for the QuakeWatch production workload"
+
+podDisruptionBudget:
+  enabled: true
+  name: quakewatch-pdb
+  # maxUnavailable (rather than minAvailable) never blocks node drains at minReplicas
+  maxUnavailable: 1
+
+cronJob:
+  enabled: true
+  name: quakewatch-health-check
+  schedule: "*/5 * * * *"
+  image: curlimages/curl
+  tag: 8.8.0
+
+# PV + PVC backed by a hostPath (single-node clusters such as Docker Desktop / minikube)
+persistence:
+  enabled: false
+  pvName: quakewatch-pv
+  pvcName: quakewatch-pvc
+  storageSize: 1Gi
+  hostPath: /tmp/quakewatch-data
+  mountPath: /app/data
+
+# Non-sensitive settings, exposed to the app as environment variables via the ConfigMap
+config:
+  APP_NAME: "QuakeWatch"
+  APP_ENV: "production"
+  LOG_LEVEL: "INFO"
+  API_TIMEOUT_SECONDS: "30"
+
+# DEMO VALUES ONLY - plain text, the chart base64-encodes them.
+# Override real values at install time, e.g. --set secretValues.API_TOKEN=...
+secretValues:
+  DB_PASSWORD: "supersecretpassword"
+  API_TOKEN: "demo-token"
