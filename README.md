@@ -86,10 +86,96 @@ You need these once:
 
 | What | Why | Check it |
 |---|---|---|
-| **AWS account + IAM user** with the `AmazonEC2FullAccess` policy | Terraform uses it to create things. Please don't use the root account. | – |
+| **AWS account + IAM user** with the `AmazonEC2FullAccess` policy | Terraform uses it to create things. Please don't use the root account. | See [Getting AWS access](#getting-aws-access-iam-user) below |
 | **AWS CLI** set up with that user's keys | Terraform reads the same credentials | `aws sts get-caller-identity` → should show your IAM user, not `root` |
 | **Terraform** 1.5 or newer | Builds the infrastructure | `terraform version` |
 | **An SSH key** at `~/.ssh/id_ed25519.pub` | To log in to the server | `ls ~/.ssh/id_ed25519.pub` – if it's missing, run `ssh-keygen -t ed25519` |
+
+### Getting AWS access (IAM user)
+
+Terraform talks to AWS using an **access key** that belongs to an **IAM user**. Think of the
+IAM user as an employee account and the access key as their badge – Terraform shows the badge,
+and AWS checks what that user is allowed to do.
+
+**Everyone gets their own IAM user and their own key.** Never share one key between people –
+if it leaks you can't tell who used it, and you'd have to change it for everybody.
+
+#### Part A – Create the user (done once per person, by whoever manages the AWS account)
+
+In the [AWS Console](https://console.aws.amazon.com/iam/):
+
+1. **Create a group** (only the first time):
+   **IAM → User groups → Create group**. Name it `terraform-users` and attach the
+   **`AmazonEC2FullAccess`** policy. That's everything this project needs – the VPC, firewall,
+   SSH key and server are all part of EC2.
+2. **Create the user:**
+   **IAM → Users → Create user**. Give it a name, e.g. `dana-terraform`.
+   Leave *"Provide user access to the AWS Management Console"* unticked – Terraform only needs a key.
+   On the next page choose **Add user to group** → `terraform-users` → **Create user**.
+3. **Create the access key:**
+   Open the new user → **Security credentials** tab → **Create access key** →
+   choose **Command Line Interface (CLI)** → tick the confirmation → **Create access key**.
+4. **Save it now.** You get an **Access key ID** (`AKIA…`) and a **Secret access key**.
+   The secret is shown **only once** – click **Download .csv file**.
+5. **Hand it over safely** – through a password manager or another secure channel.
+   Not over Slack, email or in a git repo.
+
+<details>
+<summary>Prefer the command line? Same thing with the AWS CLI (needs an admin user)</summary>
+
+```bash
+# first time only: the group and its permissions
+aws iam create-group --group-name terraform-users
+aws iam attach-group-policy --group-name terraform-users \
+  --policy-arn arn:aws:iam::aws:policy/AmazonEC2FullAccess
+
+# for each person
+aws iam create-user --user-name dana-terraform
+aws iam add-user-to-group --user-name dana-terraform --group-name terraform-users
+aws iam create-access-key --user-name dana-terraform    # prints the key ID and secret - save them
+```
+</details>
+
+#### Part B – Put the key on the person's computer (done by them)
+
+1. **Install the AWS CLI:**
+   - Mac: `brew install awscli`
+   - Windows / Linux: follow the [official installer guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+2. **Save the key:**
+   ```bash
+   aws configure
+   ```
+   It asks four questions:
+   ```
+   AWS Access Key ID [None]: AKIA................
+   AWS Secret Access Key [None]: ........................................
+   Default region name [None]: us-east-1
+   Default output format [None]: json
+   ```
+   This writes the key to `~/.aws/credentials` (on Windows: `C:\Users\<you>\.aws\credentials`).
+   Terraform finds it there automatically – there's nothing to add to the Terraform files.
+3. **Check it works:**
+   ```bash
+   aws sts get-caller-identity
+   ```
+   You should see your own user at the end, e.g. `arn:aws:iam::123456789012:user/dana-terraform`.
+
+**Already using AWS for something else on that computer?** Save this key under its own name
+so it doesn't replace the other one:
+
+```bash
+aws configure --profile quakewatch
+export AWS_PROFILE=quakewatch    # tell the AWS CLI and Terraform to use it in this terminal
+```
+
+#### Keeping keys safe
+
+- The `~/.aws/credentials` file **is** your AWS access – never commit it, paste it or screenshot it.
+- When someone leaves the project, **delete their access key** (IAM → Users → the user →
+  Security credentials) or the whole user.
+- Think a key leaked? Deactivate it in IAM right away and create a new one.
+- Two people can use the same AWS account, but **not run this project at the same time** –
+  the SSH key and firewall have fixed names and would clash.
 
 ### Settings you can change
 
