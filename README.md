@@ -25,8 +25,8 @@ The whole thing takes about 10 minutes and costs around **$1 a day** while it's 
 - [Step 2 – Connect to the server](#step-2--connect-to-the-server)
 - [Step 3 – Deploy QuakeWatch](#step-3--deploy-quakewatch)
 - [Step 4 – Open the site](#step-4--open-the-site)
-- [Step 5 – Clean up](#step-5--clean-up-dont-skip-this)
 - [Monitoring (optional)](#monitoring-optional)
+- [Step 5 – Clean up](#step-5--clean-up-dont-skip-this)
 - [Updating the app](#updating-the-app)
 - [CI/CD](#cicd)
 - [Troubleshooting](#troubleshooting)
@@ -74,7 +74,7 @@ quakewatch-aws/
 │   ├── main.tf            VPC, security group, SSH key, EC2 instance
 │   ├── user_data.sh       Script the server runs on its first boot
 │   └── outputs.tf         Prints the server IP, site URL and SSH command
-├── monitoring/            Optional Prometheus + Grafana (has its own README)
+├── monitoring/            Optional Prometheus + Grafana (values.yaml, install.sh, tunnel.sh)
 └── .github/workflows/     CI and CD pipelines
 ```
 
@@ -232,6 +232,89 @@ only lets your IP in.
 
 ---
 
+## Monitoring (optional)
+
+Want to see how the server and the cluster are doing? The [`monitoring/`](monitoring/) folder
+adds **Prometheus** and **Grafana** with ready-made dashboards. Do this *before* Step 5,
+while the server is still running.
+
+### What's what
+
+| Part | What it does |
+|---|---|
+| **Prometheus** | A database for numbers over time. Every 30 seconds it collects ("scrapes") metrics from the parts below and stores them. |
+| **Grafana** | The website you look at. It reads from Prometheus and draws graphs and dashboards. |
+| **node-exporter** | Runs on the server and reports the **EC2 machine's** CPU, memory, disk and network. |
+| **kube-state-metrics** | Reports what **Kubernetes** knows – pods, restarts, deployments, the HPA. |
+| **kubelet / cAdvisor** | Built into k3s. Report how much CPU and memory each **container** uses. |
+
+```
+  EC2 server  ──► node-exporter ────────┐
+  containers  ──► kubelet / cAdvisor ───┼──► Prometheus ──► Grafana ──► your browser
+  Kubernetes  ──► kube-state-metrics ───┘    (stores)       (shows)     (through SSH)
+```
+
+It's all installed from one popular Helm chart,
+[kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack).
+[`monitoring/values.yaml`](monitoring/values.yaml) trims it down for our one small server:
+no Alertmanager, 2 days of history, limited memory, and the k3s parts that can't be scraped are switched off.
+
+### 1. Install it – on the server
+
+```bash
+ssh ubuntu@<instance_public_ip>
+bash ~/quakewatch-aws/monitoring/install.sh
+```
+
+It takes 2–3 minutes and ends by printing the pods and the Grafana login:
+
+```
+Grafana user:     admin
+Grafana password: <random password>
+```
+
+Copy the password, then type `exit`. Lost it? On the server:
+`kubectl get secret -n monitoring monitoring-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo`
+
+### 2. Open it – on your laptop
+
+```bash
+cd quakewatch-aws/monitoring
+./tunnel.sh <instance_public_ip>
+```
+
+Keep that terminal open and browse to:
+
+- **Grafana** → http://localhost:3000 (user `admin`, password from step 1)
+- **Prometheus** → http://localhost:9090
+
+Press `Ctrl+C` to close the tunnel.
+
+> **Why a tunnel?** The firewall only opens ports 80 and 22, and we don't want Grafana open to
+> the internet. `tunnel.sh` connects over SSH (already allowed) and carries Grafana and
+> Prometheus to your laptop's `localhost`. Nothing new is opened in AWS.
+
+### 3. Look around
+
+In Grafana, open **Dashboards**:
+
+| Dashboard | Shows |
+|---|---|
+| **Node Exporter / Nodes** | The EC2 server – CPU, memory, disk, network |
+| **Kubernetes / Compute Resources / Cluster** | CPU and memory used by the whole cluster |
+| **Kubernetes / Compute Resources / Namespace (Pods)** | Pick `quakewatch` to see the app's pods |
+
+In Prometheus, **Status → Target health** should show every target as green **UP**.
+
+### Good to know
+
+- **History isn't saved to disk** – if Prometheus restarts or you rebuild the server, graphs start from zero.
+- **The app has no `/metrics` endpoint**, so you see its CPU, memory and restarts, but not things like requests per second.
+- **Remove it** with `helm uninstall monitoring -n monitoring` on the server – or just `terraform destroy`.
+- **`tunnel.sh` says "Address already in use"?** Something on your laptop already uses port 3000 or 9090 – probably an old tunnel. Find it with `lsof -i :3000`.
+
+---
+
 ## Step 5 – Clean up (don't skip this!)
 
 The server costs about **$1 a day** while it's running. When you're done, from the `terraform` folder:
@@ -242,14 +325,6 @@ terraform destroy    # type "yes"
 
 Everything Terraform created is removed – server, firewall, SSH key and network.
 Want it back later? Just run `terraform apply` again (you'll get a **new** public IP).
-
----
-
-## Monitoring (optional)
-
-The [`monitoring/`](monitoring/) folder adds **Prometheus and Grafana**, so you can see graphs of
-the server's CPU, memory and disk, and of everything running in k3s.
-It's two commands – one on the server, one on your laptop. See [monitoring/README.md](monitoring/README.md).
 
 ---
 
