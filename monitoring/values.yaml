@@ -1,0 +1,47 @@
+# Settings for the kube-prometheus-stack Helm chart, trimmed down for a
+# single small k3s node (t3.medium). Everything not listed here uses the chart defaults.
+
+# Alertmanager sends alert notifications (Slack, email, ...). Not needed for this demo.
+alertmanager:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    # Keep only 2 days of metrics so the disk and memory stay small
+    retention: 2d
+    resources:
+      requests:
+        cpu: 100m
+        memory: 400Mi
+      limits:
+        memory: 1Gi
+
+grafana:
+  # The admin password is generated randomly and stored in a Kubernetes secret
+  # (see README for the command to read it). Don't put a password in a public repo.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+# EC2 instance metrics: CPU, memory, disk, network of the server itself
+prometheus-node-exporter:
+  enabled: true
+
+# Kubernetes object metrics: pods, deployments, restarts, HPA, ...
+kube-state-metrics:
+  enabled: true
+
+# k3s runs the control plane (scheduler, controller-manager, proxy, etcd) inside
+# the single k3s process, not as separate pods, so these targets can't be scraped
+# the usual way. Turning them off avoids permanently "down" targets in Prometheus.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeEtcd:
+  enabled: false
