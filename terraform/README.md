@@ -43,7 +43,7 @@ QuakeWatch dashboard.
 ```
 quakewatch-aws/
 ├── QuakeWatch-app/      # the Flask app + Dockerfile
-├── quakewatch-chart/    # Helm chart (values-aws.yaml = settings for this setup)
+├── quakewatch-chart/    # Helm chart (values.yaml is set up for this server)
 └── terraform/
     ├── README.md        # you are here
     ├── providers.tf     # Terraform + provider versions, AWS region and default tags
@@ -144,19 +144,17 @@ Still on the server:
 ```bash
 cd ~/quakewatch-aws
 helm install quakewatch ./quakewatch-chart \
-  --namespace quakewatch --create-namespace \
-  -f quakewatch-chart/values-aws.yaml
+  --namespace quakewatch --create-namespace
 ```
 
-What's `values-aws.yaml`? Locally the chart uses a NodePort (30080), but our security
-group only opens port 80. This small file switches the service to `LoadBalancer`.
-k3s has a tiny built-in load balancer (ServiceLB) that binds it straight to port 80
-on the server – no AWS load balancer is created, so there's nothing extra to pay for.
+The chart's service is a `LoadBalancer` on port 80. k3s has a tiny built-in load
+balancer (ServiceLB) that binds it straight to port 80 on the server – no AWS load
+balancer is created, so there's nothing extra to pay for.
 
 > Prefer plain kubectl? This does the same thing:
 > ```bash
 > helm template quakewatch ./quakewatch-chart \
->   --namespace quakewatch -f quakewatch-chart/values-aws.yaml \
+>   --namespace quakewatch \
 >   | kubectl apply -n quakewatch -f -
 > ```
 > (create the namespace first with `kubectl create namespace quakewatch`)
@@ -195,8 +193,7 @@ If you changed the chart in GitHub, pull the changes on the server and upgrade:
 
 ```bash
 cd ~/quakewatch-aws && git pull
-helm upgrade quakewatch ./quakewatch-chart \
-  -n quakewatch -f quakewatch-chart/values-aws.yaml
+helm upgrade quakewatch ./quakewatch-chart -n quakewatch
 ```
 
 ## Clean up (don't skip this!)

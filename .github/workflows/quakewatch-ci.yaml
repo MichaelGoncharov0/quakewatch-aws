@@ -48,7 +48,6 @@ jobs:
         run: |
           helm lint quakewatch-chart --strict
           helm template quakewatch quakewatch-chart --namespace quakewatch > /dev/null
-          helm template quakewatch quakewatch-chart --namespace quakewatch -f quakewatch-chart/values-aws.yaml > /dev/null
 
       - name: Build Docker image
         run: |

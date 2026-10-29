@@ -13,9 +13,7 @@ lightweight Kubernetes cluster ([k3s](https://k3s.io/)) on a single EC2 instance
 ```
 quakewatch-aws/
 ├── QuakeWatch-app/        # Flask app + Dockerfile
-├── quakewatch-chart/      # Helm chart
-│   ├── values.yaml        #   default settings (works on local Kubernetes)
-│   └── values-aws.yaml    #   overrides for k3s on EC2 (LoadBalancer on port 80)
+├── quakewatch-chart/      # Helm chart (values.yaml is set up for k3s on EC2)
 ├── terraform/             # VPC, security group and EC2 instance with k3s
 │   └── README.md          #   👉 step-by-step guide to deploy everything
 └── .github/workflows/     # CI and CD pipelines
@@ -56,8 +54,7 @@ terraform apply
 
 ssh ubuntu@<instance_public_ip>
 cd ~/quakewatch-aws
-helm install quakewatch ./quakewatch-chart -n quakewatch --create-namespace \
-  -f quakewatch-chart/values-aws.yaml
+helm install quakewatch ./quakewatch-chart -n quakewatch --create-namespace
 ```
 
 Then open `http://<instance_public_ip>` in your browser.

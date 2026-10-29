@@ -44,11 +44,11 @@ securityContext:
 
 service:
   name: quakewatch-service
-  type: NodePort
+  # k3s's built-in ServiceLB binds a LoadBalancer service straight to port 80 on the EC2 node,
+  # so no AWS load balancer (ALB/NLB) is created. The security group limits who can reach it.
+  type: LoadBalancer
   port: 80
   targetPort: 5000
-  # Only used when type is NodePort
-  nodePort: 30080
 
 ingress:
   enabled: false
@@ -122,9 +122,6 @@ affinity: {}
 configMap:
   name: quakewatch-config
 
-secret:
-  name: quakewatch-secret
-
 hpa:
   name: quakewatch-hpa
 
@@ -162,9 +159,3 @@ config:
   APP_ENV: "production"
   LOG_LEVEL: "INFO"
   API_TIMEOUT_SECONDS: "30"
-
-# DEMO VALUES ONLY - plain text, the chart base64-encodes them.
-# Override real values at install time, e.g. --set secretValues.API_TOKEN=...
-secretValues:
-  DB_PASSWORD: "supersecretpassword"
-  API_TOKEN: "demo-token"
