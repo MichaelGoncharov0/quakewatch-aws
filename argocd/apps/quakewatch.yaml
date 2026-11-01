@@ -5,6 +5,9 @@ kind: Application
 metadata:
   name: quakewatch
   namespace: argocd
+  # Deleting this Application (e.g. removing this file) also deletes the app from the cluster
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:

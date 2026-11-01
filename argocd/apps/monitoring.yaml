@@ -1,0 +1,80 @@
+# Tells Argo CD to install Prometheus + Grafana (the kube-prometheus-stack Helm chart),
+# trimmed down for a single small k3s node (t3.medium).
+# Don't want monitoring? Delete this file and push - Argo CD uninstalls it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+  # Deleting this Application (e.g. removing this file) also deletes monitoring from the cluster
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 92.15.0
+    helm:
+      releaseName: monitoring
+      # Everything not listed here uses the chart defaults
+      valuesObject:
+        # Alertmanager sends alert notifications (Slack, email, ...). Not needed for this demo.
+        alertmanager:
+          enabled: false
+
+        prometheus:
+          prometheusSpec:
+            # Keep only 2 days of metrics so the disk and memory stay small
+            retention: 2d
+            resources:
+              requests:
+                cpu: 100m
+                memory: 400Mi
+              limits:
+                memory: 1Gi
+
+        grafana:
+          # The admin password is created on the server at first boot (terraform/user_data.sh),
+          # so it's never in Git and doesn't change every time Argo CD syncs.
+          admin:
+            existingSecret: grafana-admin
+            userKey: admin-user
+            passwordKey: admin-password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+
+        # EC2 instance metrics: CPU, memory, disk, network of the server itself
+        prometheus-node-exporter:
+          enabled: true
+
+        # Kubernetes object metrics: pods, deployments, restarts, HPA, ...
+        kube-state-metrics:
+          enabled: true
+
+        # k3s runs the control plane (scheduler, controller-manager, proxy, etcd) inside
+        # the single k3s process, not as separate pods, so these targets can't be scraped
+        # the usual way. Turning them off avoids permanently "down" targets in Prometheus.
+        kubeControllerManager:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeProxy:
+          enabled: false
+        kubeEtcd:
+          enabled: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # The chart's CRDs are too big for a normal "kubectl apply"
+      - ServerSideApply=true

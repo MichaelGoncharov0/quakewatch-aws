@@ -1,0 +1,21 @@
+# The "app of apps": tells Argo CD to deploy every Application in argocd/apps/ from the
+# main branch of this repo. Add or remove a file there, push, and Argo CD follows.
+# The server applies this file on first boot, once Argo CD is running - see terraform/user_data.sh.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/MichaelGoncharov0/quakewatch-aws.git
+    targetRevision: main
+    path: argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

@@ -1,0 +1,26 @@
+# Installs Argo CD with Helm.
+# The server copies this file into k3s's auto-deploy folder (/var/lib/rancher/k3s/server/manifests/)
+# on first boot, and k3s installs the chart by itself - see terraform/user_data.sh.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: argocd
+  namespace: kube-system
+spec:
+  repo: https://argoproj.github.io/argo-helm
+  chart: argo-cd
+  version: 10.10.3
+  targetNamespace: argocd
+  createNamespace: true
+  valuesContent: |-
+    configs:
+      params:
+        # Serve the UI over plain HTTP. It is only reached through the SSH tunnel (tunnel.sh),
+        # so this avoids the browser's self-signed certificate warning.
+        server.insecure: true
+
+    # Not needed here: dex is for SSO logins, notifications is for Slack/email alerts.
+    dex:
+      enabled: false
+    notifications:
+      enabled: false

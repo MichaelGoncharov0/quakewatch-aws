@@ -7,15 +7,14 @@ This repo runs it on AWS:
 
 1. You make **your own copy** of this repo on GitHub, and **your own Docker Hub repo** for the
    app's image. GitHub Actions builds the image and pushes it there.
-2. **Terraform** creates a network and one server (EC2) in AWS.
-3. The server **sets itself up** on first boot: it installs Kubernetes ([k3s](https://k3s.io/)),
-   Helm and git, and downloads your repo.
-4. You **install Argo CD** on the server with one script.
-5. **Argo CD deploys QuakeWatch** from your GitHub repo, using the image from your Docker Hub,
-   and keeps it up to date.
-6. You open `http://<server-ip>` and see the site.
+2. You run **`terraform apply`**. It creates a network and one server (EC2) in AWS.
+3. The server **sets everything up by itself** on first boot: Kubernetes ([k3s](https://k3s.io/)),
+   then **Argo CD**, and Argo CD then deploys **QuakeWatch** and **Prometheus + Grafana** from
+   your GitHub repo.
+4. You open `http://<server-ip>` and see the site.
 
-It takes about 20 minutes and costs about **$1 a day** while the server is running.
+There's nothing to install by hand on the server. It takes about 20 minutes and costs about
+**$1 a day** while the server is running.
 
 ---
 
@@ -26,12 +25,10 @@ It takes about 20 minutes and costs about **$1 a day** while the server is runni
 - [Before you start](#before-you-start)
 - [Step 1 – Make your own copy of the repo](#step-1--make-your-own-copy-of-the-repo)
 - [Step 2 – Create the server](#step-2--create-the-server)
-- [Step 3 – Connect to the server](#step-3--connect-to-the-server)
-- [Step 4 – Install Argo CD](#step-4--install-argo-cd)
-- [Step 5 – Open the site](#step-5--open-the-site)
-- [Step 6 – Open the Argo CD dashboard](#step-6--open-the-argo-cd-dashboard)
+- [Step 3 – Wait for the setup to finish](#step-3--wait-for-the-setup-to-finish)
+- [Step 4 – Open the site](#step-4--open-the-site)
+- [Step 5 – Open the dashboards](#step-5--open-the-dashboards)
 - [Making changes](#making-changes)
-- [Monitoring (optional)](#monitoring-optional)
 - [Clean up](#clean-up-dont-skip-this)
 - [Troubleshooting](#troubleshooting)
 
@@ -46,22 +43,34 @@ It takes about 20 minutes and costs about **$1 a day** while the server is runni
                  │                                                          │ the image
                  │                                        ┌─────────────────┘
                  │                                        ▼
-   ┌───────────── AWS ──────────────────────────────────────┐
-   │  EC2 server (Ubuntu, t3.medium)                        │
-   │    └── k3s (Kubernetes)                                │
-   │          ├── Argo CD     – deploys the app from GitHub │
-   │          └── QuakeWatch  – the website, on port 80     │
-   └────────────────────────────────────────────────────────┘
+   ┌───────────── AWS ───────────────────────────────────────────┐
+   │  EC2 server (Ubuntu, t3.medium)                             │
+   │    └── k3s (Kubernetes)                                     │
+   │          ├── Argo CD      – deploys the apps below from Git │
+   │          ├── QuakeWatch   – the website, on port 80         │
+   │          └── Prometheus + Grafana – monitoring              │
+   └─────────────────────────────────────────────────────────────┘
                      ▲
      Firewall: only YOUR IP can reach ports 80 (web) and 22 (SSH)
 ```
+
+**What happens when the server boots** (see [`terraform/user_data.sh`](terraform/user_data.sh)):
+
+1. It installs **k3s** and downloads your GitHub repo.
+2. It copies [`argocd/argocd.yaml`](argocd/argocd.yaml) into k3s's **auto-deploy folder**.
+   k3s applies anything placed in that folder by itself, so it installs Argo CD.
+3. Once Argo CD is running, it hands Argo CD [`argocd/root-app.yaml`](argocd/root-app.yaml).
+   This is the **"app of apps"**: it tells Argo CD *"deploy every app in the `argocd/apps/` folder."*
+4. Argo CD deploys the two apps in that folder, **QuakeWatch** and **monitoring**, and keeps
+   them matching your GitHub repo from then on.
 
 | Part | What it does |
 |---|---|
 | **Terraform** | Creates everything in AWS: a network (VPC), a firewall (security group), your SSH key and the server. |
 | **k3s** | A small Kubernetes that runs on one server. It can serve the site on port 80 without an AWS load balancer. |
+| **Argo CD** | Watches your GitHub repo. When something changes there, Argo CD updates the cluster to match. You never deploy by hand. |
 | **Helm chart** | The recipe for running QuakeWatch in Kubernetes (pods, service, autoscaling…). Lives in `quakewatch-chart/`. |
-| **Argo CD** | Watches the Helm chart in your GitHub repo. When the chart changes, Argo CD updates the cluster to match. You don't deploy by hand. |
+| **Prometheus + Grafana** | Prometheus collects numbers like CPU and memory. Grafana draws graphs of them. |
 | **GitHub Actions** | Checks every pull request (CI). When app code changes, builds a new Docker image and pushes it to your Docker Hub (CD). |
 | **Docker Hub** | Stores the app's Docker image. The server downloads it from your Docker Hub repo. |
 
@@ -71,12 +80,17 @@ It takes about 20 minutes and costs about **$1 a day** while the server is runni
 
 ```
 quakewatch-aws/
-├── terraform/         Creates the AWS network and server
-├── argocd/            Argo CD install script, settings, and the QuakeWatch "Application"
-├── quakewatch-chart/  Helm chart for QuakeWatch
-├── QuakeWatch-app/    The Python (Flask) app and its Dockerfile
-├── monitoring/        Optional Prometheus + Grafana
-└── .github/workflows/ CI and CD pipelines
+├── terraform/              Creates the AWS network and server (user_data.sh = what the server does on boot)
+├── argocd/
+│   ├── argocd.yaml         Installs Argo CD (k3s applies it on boot)
+│   ├── root-app.yaml       The "app of apps" – deploys everything in apps/
+│   └── apps/
+│       ├── quakewatch.yaml The QuakeWatch website (from quakewatch-chart/)
+│       └── monitoring.yaml Prometheus + Grafana, and their settings
+├── quakewatch-chart/       Helm chart for QuakeWatch
+├── QuakeWatch-app/         The Python (Flask) app and its Dockerfile
+├── tunnel.sh               Opens the Argo CD, Grafana and Prometheus dashboards on your laptop
+└── .github/workflows/      CI and CD pipelines
 ```
 
 ---
@@ -88,10 +102,10 @@ You need:
 | What | Check it works |
 |---|---|
 | A [GitHub](https://github.com/) account and [git](https://git-scm.com/downloads) | `git --version` |
+| A [Docker Hub](https://hub.docker.com/) account (the free plan is enough) | You can log in at hub.docker.com |
 | [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) (Mac: `brew install awscli`) | `aws --version` |
 | [Terraform](https://developer.hashicorp.com/terraform/install) 1.5 or newer | `terraform version` |
 | An SSH key at `~/.ssh/id_ed25519.pub` | `ls ~/.ssh/id_ed25519.pub` – missing? Run `ssh-keygen -t ed25519` |
-| A [Docker Hub](https://hub.docker.com/) account (the free plan is enough) | You can log in at hub.docker.com |
 
 ### Get an AWS access key
 
@@ -180,12 +194,13 @@ Check it with `git remote -v`.
 
 **6. Tell the project to use your repos**
 
-Open these four files and change the names to yours:
+Open these five files and change the names to yours:
 
 | File | Line to change | Replace with | What it's for |
 |---|---|---|---|
 | [`terraform/variables.tf`](terraform/variables.tf) | `default = "https://github.com/MichaelGoncharov0/quakewatch-aws.git"` (under `repo_url`) | Your **GitHub** username | The repo the server downloads |
-| [`argocd/quakewatch-app.yaml`](argocd/quakewatch-app.yaml) | `repoURL: https://github.com/MichaelGoncharov0/quakewatch-aws.git` | Your **GitHub** username | The repo Argo CD deploys from |
+| [`argocd/root-app.yaml`](argocd/root-app.yaml) | `repoURL: https://github.com/MichaelGoncharov0/quakewatch-aws.git` | Your **GitHub** username | Where Argo CD finds the list of apps |
+| [`argocd/apps/quakewatch.yaml`](argocd/apps/quakewatch.yaml) | `repoURL: https://github.com/MichaelGoncharov0/quakewatch-aws.git` | Your **GitHub** username | Where Argo CD finds the QuakeWatch chart |
 | [`.github/workflows/quakewatch-cd.yaml`](.github/workflows/quakewatch-cd.yaml) | `images: michaelgoncharov0/quakewatch` | Your **Docker Hub** username | Where CD pushes the image |
 | [`quakewatch-chart/values.yaml`](quakewatch-chart/values.yaml) | `repository: michaelgoncharov0/quakewatch` | Your **Docker Hub** username | Where the server downloads the image from |
 
@@ -228,78 +243,44 @@ quakewatch_url     = "http://18.207.104.139"
 ssh_command        = "ssh ubuntu@18.207.104.139"
 ```
 
-**Write down the `instance_public_ip`** – you'll use it in every step below.
+**Write down the `instance_public_ip`** – you'll use it in the steps below.
 Forgot it? Run `terraform output`.
 
 > Terraform finds your public IP by itself and only lets that IP through the firewall.
-> To change the region or server size, see [`terraform/variables.tf`](terraform/variables.tf).
+> To change the region, see [`terraform/variables.tf`](terraform/variables.tf). Keep the server
+> at **`t3.medium` or bigger** – smaller servers don't have enough memory for Argo CD and monitoring.
 
 ---
 
-## Step 3 – Connect to the server
+## Step 3 – Wait for the setup to finish
 
-Wait **2–3 minutes** for the server to finish setting itself up, then:
+The server now installs everything by itself. This takes about **5–8 minutes**.
+You don't need to do anything – but if you want to watch, connect to the server:
 
 ```bash
 ssh ubuntu@<instance_public_ip>
+sudo tail -f /var/log/cloud-init-output.log    # Ctrl+C to stop watching
 ```
 
-Check that Kubernetes is ready:
+When the last line says **`Bootstrap complete`**, Argo CD is running and deploying the apps.
+After another 2–3 minutes, check:
 
 ```bash
-kubectl get nodes
+kubectl get applications -n argocd
 ```
 
 ```
-NAME            STATUS   ROLES           AGE   VERSION
-ip-10-0-1-106   Ready    control-plane   2m    v1.36.5+k3s1
+NAME         SYNC STATUS   HEALTH STATUS
+monitoring   Synced        Healthy
+quakewatch   Synced        Healthy
+root         Synced        Healthy
 ```
 
-If it says `Ready`, go on. If not, wait a minute and try again.
+All three **Synced** and **Healthy** means everything is deployed. Type `exit` to leave the server.
 
 ---
 
-## Step 4 – Install Argo CD
-
-Still on the server, run:
-
-```bash
-bash ~/quakewatch-aws/argocd/install.sh
-```
-
-This script:
-
-1. Installs **Argo CD** with Helm (takes 2–3 minutes).
-2. Applies [`argocd/quakewatch-app.yaml`](argocd/quakewatch-app.yaml), which tells Argo CD:
-   *"deploy the chart in `quakewatch-chart/` from the `main` branch of your repo, into the
-   `quakewatch` namespace, and keep it that way."*
-3. Prints the Argo CD login at the end:
-
-```
-Argo CD user:     admin
-Argo CD password: <random password>
-```
-
-**Copy the password** – you'll need it in Step 6.
-
-Argo CD now deploys QuakeWatch by itself. After about a minute, check:
-
-```bash
-kubectl get pods -n quakewatch
-```
-
-```
-NAME                          READY   STATUS    RESTARTS   AGE
-quakewatch-6599bbd957-gxns8   1/1     Running   0          1m
-quakewatch-6599bbd957-hf6kq   1/1     Running   0          1m
-quakewatch-6599bbd957-rcjr2   1/1     Running   0          1m
-```
-
-When the pods show **`Running`** and **`1/1`**, type `exit` to leave the server.
-
----
-
-## Step 5 – Open the site
+## Step 4 – Open the site
 
 In your browser (use `http://`, not `https://`):
 
@@ -311,33 +292,54 @@ You should see the QuakeWatch dashboard. 🎉
 
 ---
 
-## Step 6 – Open the Argo CD dashboard
+## Step 5 – Open the dashboards
 
-The Argo CD dashboard is **not** open to the internet. You reach it through SSH.
+Argo CD, Grafana and Prometheus are **not** open to the internet. You reach them through SSH
+with one script.
 
-On your computer:
+**1. Get the passwords – on the server:**
 
 ```bash
-cd quakewatch-aws/argocd
+ssh ubuntu@<instance_public_ip>
+
+# Argo CD
+kubectl get secret -n argocd argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
+
+# Grafana
+kubectl get secret -n monitoring grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d; echo
+
+exit
+```
+
+> The passwords are created randomly on the server, so they're never in Git or in any log.
+
+**2. Open the tunnel – on your computer:**
+
+```bash
+cd quakewatch-aws
 ./tunnel.sh <instance_public_ip>
 ```
 
-Keep that terminal open and go to **http://localhost:8080**.
-Log in as `admin` with the password from Step 4.
+Keep that terminal open and browse to:
 
-You'll see the **quakewatch** app. It should show:
+| Dashboard | Address | Login |
+|---|---|---|
+| **Argo CD** | http://localhost:8080 | `admin` + Argo CD password |
+| **Grafana** | http://localhost:3000 | `admin` + Grafana password |
+| **Prometheus** | http://localhost:9090 | no login |
 
-- **Healthy** (green heart) – all the app's parts are running
-- **Synced** (green tick) – the cluster matches what's in your GitHub repo
+Press `Ctrl+C` to close the tunnel.
 
-Click it to see every part of the app (pods, service, autoscaler…) as a tree.
-Press `Ctrl+C` in the terminal to close the tunnel.
+**What to look at:**
 
-**Lost the password?** On the server:
+- **Argo CD:** the `root`, `quakewatch` and `monitoring` apps should all be **Healthy** (green heart)
+  and **Synced** (green tick). Click one to see all its parts as a tree.
+- **Grafana → Dashboards:**
+  - **Node Exporter / Nodes** – the server's CPU, memory, disk and network
+  - **Kubernetes / Compute Resources / Namespace (Pods)** – pick `quakewatch` to see the app's pods
+- **Prometheus → Status → Target health:** every target should be green **UP**.
 
-```bash
-kubectl get secret -n argocd argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
-```
+> Graphs start from zero if Prometheus restarts – history isn't saved to disk.
 
 ---
 
@@ -347,11 +349,15 @@ All changes go to **your own repo**. Argo CD keeps the cluster the same as your 
 you change something by hand in the cluster (e.g. `kubectl edit` or `kubectl scale`), Argo CD
 will put it back.
 
-### Changing the Helm chart (anything in `quakewatch-chart/`)
+### Changing the Helm chart or the monitoring settings
 
-1. Change the file, commit, and push to your repo (or open a pull request in your repo and merge it).
-2. Argo CD picks up the change **within about 3 minutes**.
-   In a hurry? Click **Refresh** on the app in the Argo CD dashboard.
+Edit anything in `quakewatch-chart/` or `argocd/apps/`, then commit and push to your repo
+(or open a pull request in your repo and merge it).
+
+Argo CD picks up the change **within about 3 minutes**. In a hurry? Click **Refresh** on the
+app in the Argo CD dashboard.
+
+**Don't want monitoring?** Delete `argocd/apps/monitoring.yaml` and push. Argo CD uninstalls it.
 
 ### Changing the app code (anything in `QuakeWatch-app/`)
 
@@ -376,41 +382,6 @@ These run in **your** GitHub repo, under the **Actions** tab.
 
 ---
 
-## Monitoring (optional)
-
-Adds **Prometheus** (collects numbers like CPU and memory) and **Grafana** (draws graphs
-of them) with ready-made dashboards.
-
-**1. Install it – on the server:**
-
-```bash
-ssh ubuntu@<instance_public_ip>
-bash ~/quakewatch-aws/monitoring/install.sh
-```
-
-It takes 2–3 minutes and prints the Grafana password at the end. Copy it, then `exit`.
-
-**2. Open it – on your computer:**
-
-```bash
-cd quakewatch-aws/monitoring
-./tunnel.sh <instance_public_ip>
-```
-
-- **Grafana** → http://localhost:3000 (user `admin`, password from step 1)
-- **Prometheus** → http://localhost:9090
-
-**3. Dashboards worth opening in Grafana:**
-
-| Dashboard | Shows |
-|---|---|
-| **Node Exporter / Nodes** | The server's CPU, memory, disk and network |
-| **Kubernetes / Compute Resources / Namespace (Pods)** | Pick `quakewatch` to see the app's pods |
-
-> Graphs start from zero if Prometheus restarts – history isn't saved to disk.
-
----
-
 ## Clean up (don't skip this!)
 
 The server costs about **$1 a day**. When you're done, on your computer:
@@ -420,8 +391,8 @@ cd quakewatch-aws/terraform
 terraform destroy    # type "yes"
 ```
 
-This deletes everything Terraform created. Your GitHub repo is not touched. Want the server
-back? Run `terraform apply` again and repeat Steps 3–4 (you'll get a **new** IP).
+This deletes everything Terraform created. Your GitHub and Docker Hub repos are not touched.
+Want the server back? Run `terraform apply` again and wait for the setup (you'll get a **new** IP).
 
 ---
 
@@ -431,12 +402,13 @@ back? Run `terraform apply` again and repeat Steps 3–4 (you'll get a **new** I
 |---|---|
 | **Site or SSH suddenly stopped working** | Your home IP probably changed (router restart, VPN, new Wi-Fi). Run `terraform apply` again – it updates the firewall with your new IP. |
 | **`git push` says "Permission denied" or "403"** | You're pushing to the original repo. Run `git remote -v` – it should show **your** username. Fix it with `git remote set-url origin https://github.com/<your-github-user>/quakewatch-aws.git`. |
-| **My changes don't show up on the server** | Check that `repo_url` in `terraform/variables.tf` and `repoURL` in `argocd/quakewatch-app.yaml` point to **your** repo, and that you pushed. |
+| **Setup never says `Bootstrap complete`** | Read `sudo cat /var/log/cloud-init-output.log` on the server and look at the last command before the error. |
+| **`kubectl get applications` shows nothing** | Argo CD is still installing. Wait a few minutes. To see its progress: `kubectl get pods -n argocd`. |
+| **My changes don't show up on the server** | Check that `repo_url` in `terraform/variables.tf` and `repoURL` in `argocd/root-app.yaml` and `argocd/apps/quakewatch.yaml` point to **your** repo, and that you pushed. |
 | **Pods show `ImagePullBackOff` or `ErrImagePull`** | The server can't download the image. Check that CD finished (green in **Actions**), your Docker Hub repo has a `latest` tag and is **Public**, and `repository:` in `quakewatch-chart/values.yaml` has **your** Docker Hub username. |
-| **`kubectl get nodes` says "connection refused"** | The server is still setting up. Wait a minute. To watch progress: `sudo tail -f /var/log/cloud-init-output.log` (it ends with `Bootstrap complete`). |
-| **`helm` says "Kubernetes cluster unreachable"** | Run `export KUBECONFIG=/etc/rancher/k3s/k3s.yaml` and try again. |
-| **Argo CD app shows *OutOfSync*** | Click **Sync** in the dashboard. If it keeps coming back, someone changed the cluster by hand – change the repo instead. |
-| **Argo CD app shows *Degraded* or pods are not `Running`** | Run `kubectl describe pod -n quakewatch <pod-name>` – the **Events** at the bottom say what's wrong. |
+| **An Argo CD app shows *OutOfSync*** | Click **Sync** in the dashboard. If it keeps coming back, someone changed the cluster by hand – change the repo instead. |
+| **An Argo CD app shows *Degraded*** | Click the app and look for the red part. For pods, run `kubectl describe pod -n <namespace> <pod-name>` – the **Events** at the bottom say what's wrong. |
 | **CD fails with "unauthorized" or "denied"** | The Docker Hub secrets are missing or wrong in your GitHub repo, the token doesn't have **Write** access, or `images:` in `quakewatch-cd.yaml` still says `michaelgoncharov0`. See [Step 1](#step-1--make-your-own-copy-of-the-repo). |
 | **`tunnel.sh` says "Address already in use"** | An old tunnel is still open. Close that terminal, or find it with `lsof -i :8080`. |
+| **I changed `user_data.sh` or `argocd/argocd.yaml` but nothing happened** | These are only used when the server first boots. Run `terraform apply` – a change to `user_data.sh` builds a new server. For `argocd.yaml`, run `terraform destroy` then `terraform apply`. |
 | **`terraform apply` fails with `error asking for approval: EOF`** | Run it in a normal terminal so you can type `yes`. |
