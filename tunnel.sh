@@ -18,7 +18,9 @@ ssh -t -o ExitOnForwardFailure=yes \
   -L 8080:localhost:8080 -L 3000:localhost:3000 -L 9090:localhost:9090 "ubuntu@$IP" '
   export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
   # Clear port-forwards left over from earlier runs, which would hold the ports.
-  pkill -f "kubectl port-forward" || true
+  # "[k]ubectl" so the pattern does not match (and kill) this shell, whose own
+  # command line contains the text of this script.
+  pkill -f "[k]ubectl port-forward" || true
   # Stop every forward started below when this session ends.
   trap "kill 0" EXIT INT TERM HUP
   # Restart a forward when it drops (e.g. after a pod restart).
