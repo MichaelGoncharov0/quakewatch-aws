@@ -1,5 +1,5 @@
-# Tells Argo CD to install Prometheus + Grafana (the kube-prometheus-stack Helm chart),
-# trimmed down for a single small k3s node (t3.medium).
+# Tells Argo CD to install Prometheus + Alertmanager + Grafana (the kube-prometheus-stack
+# Helm chart), trimmed down for a single small k3s node (t3a.large).
 # Don't want monitoring? Delete this file and push - Argo CD uninstalls it.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -19,9 +19,22 @@ spec:
       releaseName: monitoring
       # Everything not listed here uses the chart defaults
       valuesObject:
-        # Alertmanager sends alert notifications (Slack, email, ...). Not needed for this demo.
+        # Alertmanager receives the alerts Prometheus fires (pod crash-looping, node low on
+        # memory, target down, ...), groups them, and shows them at http://localhost:9093
+        # through tunnel.sh. The chart ships ~100 ready-made alert rules.
+        # Nothing is sent anywhere yet - to get Slack/email notifications, add a receiver
+        # under alertmanager.config (see the README, "Alerts").
         alertmanager:
-          enabled: false
+          enabled: true
+          alertmanagerSpec:
+            # Alerts are only kept in memory for this long
+            retention: 24h
+            resources:
+              requests:
+                cpu: 10m
+                memory: 32Mi
+              limits:
+                memory: 128Mi
 
         prometheus:
           prometheusSpec:

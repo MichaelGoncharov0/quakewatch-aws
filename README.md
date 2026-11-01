@@ -9,12 +9,12 @@ This repo runs it on AWS:
    app's image. GitHub Actions builds the image and pushes it there.
 2. You run **`terraform apply`**. It creates a network and one server (EC2) in AWS.
 3. The server **sets everything up by itself** on first boot: Kubernetes ([k3s](https://k3s.io/)),
-   then **Argo CD**, and Argo CD then deploys **QuakeWatch** and **Prometheus + Grafana** from
-   your GitHub repo.
+   then **Argo CD**, and Argo CD then deploys **QuakeWatch** and **Prometheus + Alertmanager +
+   Grafana** from your GitHub repo.
 4. You open `http://<server-ip>` and see the site.
 
 There's nothing to install by hand on the server. It takes about 20 minutes and costs about
-**$1 a day** while the server is running.
+**$0.75 a day** while the server is running (a cheap "Spot" server – see [Cost](#cost-and-spot-servers)).
 
 ---
 
@@ -28,7 +28,10 @@ There's nothing to install by hand on the server. It takes about 20 minutes and 
 - [Step 3 – Wait for the setup to finish](#step-3--wait-for-the-setup-to-finish)
 - [Step 4 – Open the site](#step-4--open-the-site)
 - [Step 5 – Open the dashboards](#step-5--open-the-dashboards)
+- [Alerts (Alertmanager)](#alerts-alertmanager)
 - [Making changes](#making-changes)
+- [Getting the latest changes from the original repo](#getting-the-latest-changes-from-the-original-repo)
+- [Cost and Spot servers](#cost-and-spot-servers)
 - [Clean up](#clean-up-dont-skip-this)
 - [Troubleshooting](#troubleshooting)
 
@@ -43,13 +46,13 @@ There's nothing to install by hand on the server. It takes about 20 minutes and 
                  │                                                          │ the image
                  │                                        ┌─────────────────┘
                  │                                        ▼
-   ┌───────────── AWS ───────────────────────────────────────────┐
-   │  EC2 server (Ubuntu, t3.medium)                             │
-   │    └── k3s (Kubernetes)                                     │
-   │          ├── Argo CD      – deploys the apps below from Git │
-   │          ├── QuakeWatch   – the website, on port 80         │
-   │          └── Prometheus + Grafana – monitoring              │
-   └─────────────────────────────────────────────────────────────┘
+   ┌───────────── AWS ────────────────────────────────────────────┐
+   │  EC2 server (Ubuntu, t3a.large Spot: 2 vCPU, 8 GB RAM)       │
+   │    └── k3s (Kubernetes)                                      │
+   │          ├── Argo CD      – deploys the apps below from Git  │
+   │          ├── QuakeWatch   – the website, on port 80          │
+   │          └── Monitoring   – Prometheus, Alertmanager, Grafana │
+   └──────────────────────────────────────────────────────────────┘
                      ▲
      Firewall: only YOUR IP can reach ports 80 (web) and 22 (SSH)
 ```
@@ -70,7 +73,7 @@ There's nothing to install by hand on the server. It takes about 20 minutes and 
 | **k3s** | A small Kubernetes that runs on one server. It can serve the site on port 80 without an AWS load balancer. |
 | **Argo CD** | Watches your GitHub repo. When something changes there, Argo CD updates the cluster to match. You never deploy by hand. |
 | **Helm chart** | The recipe for running QuakeWatch in Kubernetes (pods, service, autoscaling…). Lives in `quakewatch-chart/`. |
-| **Prometheus + Grafana** | Prometheus collects numbers like CPU and memory. Grafana draws graphs of them. |
+| **Prometheus + Alertmanager + Grafana** | Prometheus collects numbers like CPU and memory and fires alerts when something looks wrong. Alertmanager collects those alerts (and can send them to Slack/email). Grafana draws graphs. |
 | **GitHub Actions** | Checks every pull request (CI). When app code changes, builds a new Docker image and pushes it to your Docker Hub (CD). |
 | **Docker Hub** | Stores the app's Docker image. The server downloads it from your Docker Hub repo. |
 
@@ -86,10 +89,10 @@ quakewatch-aws/
 │   ├── root-app.yaml       The "app of apps" – deploys everything in apps/
 │   └── apps/
 │       ├── quakewatch.yaml The QuakeWatch website (from quakewatch-chart/)
-│       └── monitoring.yaml Prometheus + Grafana, and their settings
+│       └── monitoring.yaml Prometheus + Alertmanager + Grafana, and their settings
 ├── quakewatch-chart/       Helm chart for QuakeWatch
 ├── QuakeWatch-app/         The Python (Flask) app and its Dockerfile
-├── tunnel.sh               Opens the Argo CD, Grafana and Prometheus dashboards on your laptop
+├── tunnel.sh               Opens the Argo CD, Grafana, Prometheus and Alertmanager dashboards on your laptop
 └── .github/workflows/      CI and CD pipelines
 ```
 
@@ -247,8 +250,10 @@ ssh_command        = "ssh ubuntu@18.207.104.139"
 Forgot it? Run `terraform output`.
 
 > Terraform finds your public IP by itself and only lets that IP through the firewall.
-> To change the region, see [`terraform/variables.tf`](terraform/variables.tf). Keep the server
-> at **`t3.medium` or bigger** – smaller servers don't have enough memory for Argo CD and monitoring.
+> To change the region, see [`terraform/variables.tf`](terraform/variables.tf). The server is a
+> **`t3a.large` Spot** instance (8 GB RAM). Don't go smaller than 8 GB – on 4 GB (`t3.medium`)
+> Grafana and Argo CD keep getting restarted. Want a normal (non-Spot) server? See
+> [Cost and Spot servers](#cost-and-spot-servers).
 
 ---
 
@@ -294,8 +299,8 @@ You should see the QuakeWatch dashboard. 🎉
 
 ## Step 5 – Open the dashboards
 
-Argo CD, Grafana and Prometheus are **not** open to the internet. You reach them through SSH
-with one script.
+Argo CD, Grafana, Prometheus and Alertmanager are **not** open to the internet. You reach them
+through SSH with one script.
 
 **1. Get the passwords – on the server:**
 
@@ -327,8 +332,13 @@ Keep that terminal open and browse to:
 | **Argo CD** | http://localhost:8080 | `admin` + Argo CD password |
 | **Grafana** | http://localhost:3000 | `admin` + Grafana password |
 | **Prometheus** | http://localhost:9090 | no login |
+| **Alertmanager** | http://localhost:9093 | no login |
 
-Press `Ctrl+C` to close the tunnel.
+Press `Ctrl+C` to close the tunnel. It also stops the port-forwards on the server, and if a
+dashboard restarts while the tunnel is open, the tunnel reconnects to it by itself after a few seconds.
+
+> **Grafana right after setup:** on first start Grafana loads ~30 dashboards, which can take a
+> few minutes. If `localhost:3000` doesn't answer yet, wait 2–3 minutes and reload.
 
 **What to look at:**
 
@@ -338,8 +348,53 @@ Press `Ctrl+C` to close the tunnel.
   - **Node Exporter / Nodes** – the server's CPU, memory, disk and network
   - **Kubernetes / Compute Resources / Namespace (Pods)** – pick `quakewatch` to see the app's pods
 - **Prometheus → Status → Target health:** every target should be green **UP**.
+- **Prometheus → Alerts:** the alert rules and which ones are firing right now.
+- **Alertmanager:** the alerts that are firing, grouped. See [Alerts](#alerts-alertmanager).
 
 > Graphs start from zero if Prometheus restarts – history isn't saved to disk.
+
+---
+
+## Alerts (Alertmanager)
+
+Prometheus checks ~100 ready-made alert rules from the
+[kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack)
+chart every 30 seconds – for example *a pod keeps crash-looping*, *the server is almost out of
+memory or disk*, *a Prometheus target is down*. When a rule fires, Prometheus sends the alert to
+**Alertmanager**, which groups it and shows it at **http://localhost:9093** (through `tunnel.sh`).
+
+**Two alerts are always firing – that's normal:**
+
+| Alert | Why |
+|---|---|
+| `Watchdog` | A "heartbeat" alert that's always on, to prove the alert pipeline works. |
+| `InfoInhibitor` | Used internally to hide low-importance alerts. |
+
+**Getting notified on Slack or email.** Out of the box nothing is sent anywhere. To get a Slack
+message, add this under `alertmanager:` in [`argocd/apps/monitoring.yaml`](argocd/apps/monitoring.yaml),
+then commit and push:
+
+```yaml
+        alertmanager:
+          enabled: true
+          config:
+            route:
+              receiver: slack
+              group_by: [alertname, namespace]
+              routes:
+                - receiver: "null"
+                  matchers: [alertname = "Watchdog"]
+            receivers:
+              - name: "null"
+              - name: slack
+                slack_configs:
+                  - api_url: https://hooks.slack.com/services/XXX/YYY/ZZZ   # your Slack webhook
+                    channel: "#alerts"
+                    send_resolved: true
+```
+
+> A Slack webhook URL is a secret – anyone who has it can post to your channel. Only put it in
+> Git if the repo is private, or keep it in a Kubernetes Secret instead.
 
 ---
 
@@ -382,9 +437,102 @@ These run in **your** GitHub repo, under the **Actions** tab.
 
 ---
 
+## Getting the latest changes from the original repo
+
+Already made your copy and want the newest version of this project? Pull it from the original
+repo into yours. Run this in your `quakewatch-aws` folder on your computer:
+
+```bash
+# Once: remember the original repo under the name "upstream"
+git remote add upstream https://github.com/MichaelGoncharov0/quakewatch-aws.git
+
+# Every time you want the latest changes
+git checkout main
+git pull upstream main
+```
+
+**Keep your own names.** The original repo has *its* GitHub and Docker Hub names in the five
+files from [Step 1 – part 6](#step-1--make-your-own-copy-of-the-repo). If git reports a
+**conflict** in any of them, keep **your** line – your GitHub / Docker Hub username – and delete
+the other. Then check nothing slipped through. This should print **nothing**:
+
+```bash
+grep -rn -i "michaelgoncharov0" --exclude=README.md --exclude-dir=.git .
+```
+
+If it prints a line, change that name to yours (see the table in Step 1 – part 6). These are
+all the places with a name in them:
+
+| File | What to check |
+|---|---|
+| `terraform/variables.tf` | `repo_url` → **your GitHub** repo |
+| `argocd/root-app.yaml` | `repoURL` → **your GitHub** repo |
+| `argocd/apps/quakewatch.yaml` | `repoURL` → **your GitHub** repo |
+| `.github/workflows/quakewatch-cd.yaml` | `images:` → **your Docker Hub** user |
+| `quakewatch-chart/values.yaml` | `repository:` → **your Docker Hub** user |
+
+Then push to your repo, so Argo CD sees the changes:
+
+```bash
+git push origin main
+```
+
+**After this update you also need to rebuild the server**, because the server type changed
+(`t3.medium` → `t3a.large` Spot) and so did what it does on first boot (it now adds swap):
+
+```bash
+cd terraform
+terraform apply      # type "yes"
+```
+
+Terraform deletes the old server and creates a new one. Everything is reinstalled by itself,
+but you get a **new IP** and **new Argo CD and Grafana passwords** – get them again as in
+[Step 5](#step-5--open-the-dashboards). Also pull the latest `tunnel.sh` (it now opens
+Alertmanager on port 9093 and cleans up after itself).
+
+**What changed in this update:**
+
+| Change | Files | Do you need to edit anything? |
+|---|---|---|
+| Bigger, cheaper server: `t3a.large` Spot (8 GB) instead of `t3.medium` (4 GB) | `terraform/variables.tf`, `terraform/main.tf` | No – just `terraform apply` |
+| 2 GB swap file on the server | `terraform/user_data.sh` | No |
+| Alertmanager turned on | `argocd/apps/monitoring.yaml` | No (optional: add Slack, see [Alerts](#alerts-alertmanager)) |
+| Grafana given more memory and more time to start | `argocd/apps/monitoring.yaml` | No |
+| `tunnel.sh` cleans up old port-forwards, reconnects by itself, adds Alertmanager | `tunnel.sh` | No |
+
+---
+
+## Cost and Spot servers
+
+The server is a **`t3a.large`** (2 vCPU, 8 GB RAM) bought as a **Spot instance**. Spot is
+AWS's spare capacity, sold much cheaper than normal ("on-demand") servers.
+
+| Server | Memory | About per day (us-east-1) |
+|---|---|---|
+| `t3.medium` on-demand (the old default) | 4 GB – too small | $1.00 |
+| `t3a.large` on-demand | 8 GB | $1.80 |
+| **`t3a.large` Spot (the default)** | **8 GB** | **$0.65–0.75** |
+
+Plus about **$0.05 a day** for the 20 GB disk. Spot prices change a little over time; you never
+pay more than the on-demand price.
+
+**The catch:** when AWS needs the capacity back, it can stop a Spot server with 2 minutes'
+warning. It's rare for this size, but it can happen. The server is **stopped, not deleted** –
+AWS starts it again when capacity is back, and everything comes back by itself, but it gets a
+**new public IP**. Run `terraform refresh` and then `terraform output` to see it.
+
+**Want a normal server that's never interrupted?** In
+[`terraform/variables.tf`](terraform/variables.tf) set `use_spot` to `false` and run
+`terraform apply` (it builds a new server). It costs about $1.80 a day.
+
+**Save more:** run `terraform destroy` whenever you're not using the server – you pay nothing
+while it's gone, and `terraform apply` brings it all back in ~15 minutes.
+
+---
+
 ## Clean up (don't skip this!)
 
-The server costs about **$1 a day**. When you're done, on your computer:
+The server costs about **$0.75 a day**. When you're done, on your computer:
 
 ```bash
 cd quakewatch-aws/terraform
@@ -409,6 +557,9 @@ Want the server back? Run `terraform apply` again and wait for the setup (you'll
 | **An Argo CD app shows *OutOfSync*** | Click **Sync** in the dashboard. If it keeps coming back, someone changed the cluster by hand – change the repo instead. |
 | **An Argo CD app shows *Degraded*** | Click the app and look for the red part. For pods, run `kubectl describe pod -n <namespace> <pod-name>` – the **Events** at the bottom say what's wrong. |
 | **CD fails with "unauthorized" or "denied"** | The Docker Hub secrets are missing or wrong in your GitHub repo, the token doesn't have **Write** access, or `images:` in `quakewatch-cd.yaml` still says `michaelgoncharov0`. See [Step 1](#step-1--make-your-own-copy-of-the-repo). |
-| **`tunnel.sh` says "Address already in use"** | An old tunnel is still open. Close that terminal, or find it with `lsof -i :8080`. |
+| **`tunnel.sh` stops with "Address already in use" or "remote port forwarding failed"** | An old tunnel is still open **on your computer**. Close that terminal, or find it with `lsof -i :8080` and `kill <PID>`. (Old port-forwards left **on the server** are cleaned up by the script itself.) |
+| **Grafana (`localhost:3000`) doesn't load, the others do** | Grafana is still starting – it can take a few minutes after setup. Check on the server: `kubectl get pods -n monitoring` – wait for `monitoring-grafana-…` to show `3/3 Running`. |
+| **The server's IP changed by itself** | It's a Spot server and AWS stopped and restarted it (see [Cost](#cost-and-spot-servers)). Run `terraform refresh` and `terraform output` for the new IP. |
+| **`terraform apply` fails with `InsufficientInstanceCapacity`, `MaxSpotInstanceCountExceeded` or `SpotMaxPriceTooLow`** | AWS has no Spot capacity for you right now. Try again in a few minutes, or set `use_spot = false` in `terraform/variables.tf`. |
 | **I changed `user_data.sh` or `argocd/argocd.yaml` but nothing happened** | These are only used when the server first boots. Run `terraform apply` – a change to `user_data.sh` builds a new server. For `argocd.yaml`, run `terraform destroy` then `terraform apply`. |
 | **`terraform apply` fails with `error asking for approval: EOF`** | Run it in a normal terminal so you can type `yes`. |

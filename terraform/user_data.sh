@@ -10,6 +10,15 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y git curl openssl
 
+# 2 GB swap file: a free safety net for the system itself (k3s, containerd) so a short
+# memory spike slows things down instead of killing them. k3s runs fine with swap on;
+# pods themselves don't use it. Kept on after reboots via /etc/fstab.
+fallocate -l 2G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
 # k3s: Traefik is disabled so the built-in ServiceLB can bind the QuakeWatch
 # LoadBalancer service directly to port 80. Kubeconfig is readable by the ubuntu user.
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik --write-kubeconfig-mode 644" sh -

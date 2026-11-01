@@ -105,6 +105,20 @@ resource "aws_instance" "k3s" {
   # Recreate the instance when the bootstrap script changes (user data only runs on first boot)
   user_data_replace_on_change = true
 
+  # Spot pricing (see var.use_spot). No max price is set, so we pay the current Spot price,
+  # which is never more than the on-demand price. "persistent" + "stop" means an interruption
+  # only stops the server; AWS starts it again when capacity is back.
+  dynamic "instance_market_options" {
+    for_each = var.use_spot ? [1] : []
+    content {
+      market_type = "spot"
+      spot_options {
+        spot_instance_type             = "persistent"
+        instance_interruption_behavior = "stop"
+      }
+    }
+  }
+
   root_block_device {
     volume_size = 20
     volume_type = "gp3"
