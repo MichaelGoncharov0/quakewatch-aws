@@ -270,10 +270,6 @@ http://<instance_public_ip>
 
 You should see the QuakeWatch dashboard. 🎉
 
-> **Site won't load on a work laptop?** Company networks often send web traffic through a proxy
-> with a different IP, so the firewall blocks it. Try your phone on your home Wi-Fi, or run
-> `ssh -L 8081:localhost:80 ubuntu@<instance_public_ip>` and open http://localhost:8081.
-
 ---
 
 ## Step 6 – Open the Argo CD dashboard
