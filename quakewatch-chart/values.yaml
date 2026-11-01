@@ -6,7 +6,7 @@ app:
   name: quakewatch
 
 # Used only when autoscaling.enabled is false (otherwise the HPA owns the replica count).
-replicaCount: 4
+replicaCount:
 
 image:
   repository: michaelgoncharov0/quakewatch
@@ -107,8 +107,8 @@ readinessProbe:
 
 autoscaling:
   enabled: true
-  minReplicas: 3
-  maxReplicas: 5
+  minReplicas: 2
+  maxReplicas: 4
   targetCPUUtilizationPercentage: 70
 
 # Additional volumes / volumeMounts on the Deployment
