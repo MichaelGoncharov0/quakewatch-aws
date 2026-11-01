@@ -1,0 +1,13 @@
+# Argo CD settings for one small k3s server.
+
+configs:
+  params:
+    # Serve the UI over plain HTTP. It is only reached through the SSH tunnel (tunnel.sh),
+    # so this avoids the browser's self-signed certificate warning.
+    server.insecure: true
+
+# Not needed here: dex is for SSO logins, notifications is for Slack/email alerts.
+dex:
+  enabled: false
+notifications:
+  enabled: false

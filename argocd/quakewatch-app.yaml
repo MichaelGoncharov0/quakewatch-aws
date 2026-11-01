@@ -1,0 +1,22 @@
+# Tells Argo CD to deploy the Helm chart in quakewatch-chart/ from the main branch of this repo,
+# and to keep the cluster matching it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: quakewatch
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/MichaelGoncharov0/quakewatch-aws.git
+    targetRevision: main
+    path: quakewatch-chart
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: quakewatch
+  syncPolicy:
+    automated:
+      prune: true     # delete things that were removed from Git
+      selfHeal: true  # undo changes made by hand in the cluster
+    syncOptions:
+      - CreateNamespace=true
