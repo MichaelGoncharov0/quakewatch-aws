@@ -5,15 +5,17 @@ from the [USGS Earthquake API](https://earthquake.usgs.gov/fdsnws/event/1/).
 
 This repo runs it on AWS:
 
-1. You make **your own copy** of this repo on GitHub.
+1. You make **your own copy** of this repo on GitHub, and **your own Docker Hub repo** for the
+   app's image. GitHub Actions builds the image and pushes it there.
 2. **Terraform** creates a network and one server (EC2) in AWS.
 3. The server **sets itself up** on first boot: it installs Kubernetes ([k3s](https://k3s.io/)),
    Helm and git, and downloads your repo.
 4. You **install Argo CD** on the server with one script.
-5. **Argo CD deploys QuakeWatch** from your GitHub repo and keeps it up to date.
+5. **Argo CD deploys QuakeWatch** from your GitHub repo, using the image from your Docker Hub,
+   and keeps it up to date.
 6. You open `http://<server-ip>` and see the site.
 
-It takes about 15 minutes and costs about **$1 a day** while the server is running.
+It takes about 20 minutes and costs about **$1 a day** while the server is running.
 
 ---
 
@@ -38,9 +40,12 @@ It takes about 15 minutes and costs about **$1 a day** while the server is runni
 ## How it works
 
 ```
-   You ──► YOUR GitHub repo ◄────── Argo CD checks it every 3 minutes
-                                          │
-                                          ▼
+   You ──► YOUR GitHub repo ──► GitHub Actions builds the image ──► YOUR Docker Hub repo
+                 ▲                                                          │
+                 │ Argo CD checks it every 3 minutes                        │ k3s downloads
+                 │                                                          │ the image
+                 │                                        ┌─────────────────┘
+                 │                                        ▼
    ┌───────────── AWS ──────────────────────────────────────┐
    │  EC2 server (Ubuntu, t3.medium)                        │
    │    └── k3s (Kubernetes)                                │
@@ -57,7 +62,8 @@ It takes about 15 minutes and costs about **$1 a day** while the server is runni
 | **k3s** | A small Kubernetes that runs on one server. It can serve the site on port 80 without an AWS load balancer. |
 | **Helm chart** | The recipe for running QuakeWatch in Kubernetes (pods, service, autoscaling…). Lives in `quakewatch-chart/`. |
 | **Argo CD** | Watches the Helm chart in your GitHub repo. When the chart changes, Argo CD updates the cluster to match. You don't deploy by hand. |
-| **GitHub Actions** | Checks every pull request (CI) and builds a new Docker image when app code is merged (CD). |
+| **GitHub Actions** | Checks every pull request (CI). When app code changes, builds a new Docker image and pushes it to your Docker Hub (CD). |
+| **Docker Hub** | Stores the app's Docker image. The server downloads it from your Docker Hub repo. |
 
 ---
 
@@ -85,7 +91,7 @@ You need:
 | [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) (Mac: `brew install awscli`) | `aws --version` |
 | [Terraform](https://developer.hashicorp.com/terraform/install) 1.5 or newer | `terraform version` |
 | An SSH key at `~/.ssh/id_ed25519.pub` | `ls ~/.ssh/id_ed25519.pub` – missing? Run `ssh-keygen -t ed25519` |
-| *(Optional)* A [Docker Hub](https://hub.docker.com/) account | Only needed if you want to change the app's code – see [Making changes](#making-changes) |
+| A [Docker Hub](https://hub.docker.com/) account (the free plan is enough) | You can log in at hub.docker.com |
 
 ### Get an AWS access key
 
@@ -124,8 +130,9 @@ aws sts get-caller-identity    # should end with  user/dana-terraform  (not root
 
 ## Step 1 – Make your own copy of the repo
 
-> **Don't push to the original repo.** Work in your own copy. The server and Argo CD will
-> pull from **your** repo, so every change you make is under your control.
+> **Don't push to the original repo or the original Docker Hub image.** You'll use your own
+> GitHub repo (for the code) and your own Docker Hub repo (for the app image). The server and
+> Argo CD pull from **yours**, so every change you make is under your control.
 
 **1. Create an empty repo on GitHub**
 
@@ -134,7 +141,31 @@ On GitHub click **+ → New repository**. Name it `quakewatch-aws`, make it **Pu
 
 > It needs to be public because the server and Argo CD download it without a password.
 
-**2. Download this project and point it at your repo**
+**2. Create a repo on Docker Hub**
+
+On [Docker Hub](https://hub.docker.com/) go to **Repositories → Create a repository**.
+Name it `quakewatch` and set it to **Public**.
+
+> Public for the same reason – the server downloads the image without a password.
+
+**3. Create a Docker Hub access token**
+
+In Docker Hub go to **Account settings → Personal access tokens → Generate new token**.
+Give it **Read & Write** access and **copy the token** – it's shown only once.
+
+**4. Give GitHub your Docker Hub login**
+
+In **your** GitHub repo go to **Settings → Secrets and variables → Actions → New repository secret**
+and add these two:
+
+| Secret | Value |
+|---|---|
+| `DOCKERHUB_USERNAME` | Your Docker Hub username |
+| `DOCKERHUB_TOKEN` | The token from the step above (not your password) |
+
+The CD pipeline uses them to push images to your Docker Hub.
+
+**5. Download this project and point it at your repo**
 
 Replace `<your-github-user>` with your GitHub username:
 
@@ -147,24 +178,32 @@ git remote set-url origin https://github.com/<your-github-user>/quakewatch-aws.g
 The last line changes where `git push` goes – from now on it goes to **your** repo.
 Check it with `git remote -v`.
 
-**3. Tell the project to use your repo**
+**6. Tell the project to use your repos**
 
-Open these two files and replace `MichaelGoncharov0` with your GitHub username:
+Open these four files and change the names to yours:
 
-| File | Line to change | What it's for |
-|---|---|---|
-| [`terraform/variables.tf`](terraform/variables.tf) | `default = "https://github.com/MichaelGoncharov0/quakewatch-aws.git"` (under `repo_url`) | The repo the server downloads |
-| [`argocd/quakewatch-app.yaml`](argocd/quakewatch-app.yaml) | `repoURL: https://github.com/MichaelGoncharov0/quakewatch-aws.git` | The repo Argo CD deploys from |
+| File | Line to change | Replace with | What it's for |
+|---|---|---|---|
+| [`terraform/variables.tf`](terraform/variables.tf) | `default = "https://github.com/MichaelGoncharov0/quakewatch-aws.git"` (under `repo_url`) | Your **GitHub** username | The repo the server downloads |
+| [`argocd/quakewatch-app.yaml`](argocd/quakewatch-app.yaml) | `repoURL: https://github.com/MichaelGoncharov0/quakewatch-aws.git` | Your **GitHub** username | The repo Argo CD deploys from |
+| [`.github/workflows/quakewatch-cd.yaml`](.github/workflows/quakewatch-cd.yaml) | `images: michaelgoncharov0/quakewatch` | Your **Docker Hub** username | Where CD pushes the image |
+| [`quakewatch-chart/values.yaml`](quakewatch-chart/values.yaml) | `repository: michaelgoncharov0/quakewatch` | Your **Docker Hub** username | Where the server downloads the image from |
 
-**4. Push it to your repo**
+**7. Push it to your repo**
 
 ```bash
 git add .
-git commit -m "Use my own repo"
+git commit -m "Use my own GitHub and Docker Hub repos"
 git push -u origin main
 ```
 
-Open your repo on GitHub – you should see all the files there.
+This push also starts the **CD** pipeline (because you changed its file). It builds the app
+image and pushes it to your Docker Hub:
+
+1. In your GitHub repo open the **Actions** tab and wait for **QuakeWatch CD** to turn green (2–3 minutes).
+2. In Docker Hub open your `quakewatch` repo – you should see a `latest` tag.
+
+**Wait for the `latest` tag before Step 2** – without it the server has no image to run.
 
 ---
 
@@ -316,29 +355,10 @@ will put it back.
 
 ### Changing the app code (anything in `QuakeWatch-app/`)
 
-The site runs a ready-made Docker image (`michaelgoncharov0/quakewatch`). To run **your own**
-code you need to build and push your own image to **your** Docker Hub account. Set this up once:
-
-1. In [Docker Hub](https://hub.docker.com/) go to **Account settings → Personal access tokens**
-   and create a token with **Read & Write** access.
-2. In **your** GitHub repo go to **Settings → Secrets and variables → Actions** and add:
-
-   | Secret | Value |
-   |---|---|
-   | `DOCKERHUB_USERNAME` | Your Docker Hub username |
-   | `DOCKERHUB_TOKEN` | The token from step 1 |
-
-3. Replace `michaelgoncharov0` with your Docker Hub username in these two files, then commit and push:
-
-   | File | Line to change |
-   |---|---|
-   | [`.github/workflows/quakewatch-cd.yaml`](.github/workflows/quakewatch-cd.yaml) | `images: michaelgoncharov0/quakewatch` |
-   | [`quakewatch-chart/values.yaml`](quakewatch-chart/values.yaml) | `repository: michaelgoncharov0/quakewatch` |
-
-After that, every time you push a change in `QuakeWatch-app/` to `main`:
-
-1. **CD** builds a new image and pushes it to your Docker Hub as `<your-dockerhub-user>/quakewatch:latest`.
-2. The image name didn't change, so Argo CD doesn't see anything new. Restart the app to
+1. Change the code, commit, and push to `main` in your repo (or open a pull request and merge it).
+2. **CD** builds a new image and pushes it to your Docker Hub as `<your-dockerhub-user>/quakewatch:latest`.
+   Watch it in the **Actions** tab.
+3. The image name didn't change, so Argo CD doesn't see anything new. Restart the app to
    pull the new image – on the server:
    ```bash
    kubectl rollout restart deployment quakewatch -n quakewatch
@@ -412,10 +432,11 @@ back? Run `terraform apply` again and repeat Steps 3–4 (you'll get a **new** I
 | **Site or SSH suddenly stopped working** | Your home IP probably changed (router restart, VPN, new Wi-Fi). Run `terraform apply` again – it updates the firewall with your new IP. |
 | **`git push` says "Permission denied" or "403"** | You're pushing to the original repo. Run `git remote -v` – it should show **your** username. Fix it with `git remote set-url origin https://github.com/<your-github-user>/quakewatch-aws.git`. |
 | **My changes don't show up on the server** | Check that `repo_url` in `terraform/variables.tf` and `repoURL` in `argocd/quakewatch-app.yaml` point to **your** repo, and that you pushed. |
+| **Pods show `ImagePullBackOff` or `ErrImagePull`** | The server can't download the image. Check that CD finished (green in **Actions**), your Docker Hub repo has a `latest` tag and is **Public**, and `repository:` in `quakewatch-chart/values.yaml` has **your** Docker Hub username. |
 | **`kubectl get nodes` says "connection refused"** | The server is still setting up. Wait a minute. To watch progress: `sudo tail -f /var/log/cloud-init-output.log` (it ends with `Bootstrap complete`). |
 | **`helm` says "Kubernetes cluster unreachable"** | Run `export KUBECONFIG=/etc/rancher/k3s/k3s.yaml` and try again. |
 | **Argo CD app shows *OutOfSync*** | Click **Sync** in the dashboard. If it keeps coming back, someone changed the cluster by hand – change the repo instead. |
 | **Argo CD app shows *Degraded* or pods are not `Running`** | Run `kubectl describe pod -n quakewatch <pod-name>` – the **Events** at the bottom say what's wrong. |
-| **CD fails with "unauthorized" or "denied"** | The Docker Hub secrets are missing in your repo, or the image name still says `michaelgoncharov0`. See [Changing the app code](#changing-the-app-code-anything-in-quakewatch-app). |
+| **CD fails with "unauthorized" or "denied"** | The Docker Hub secrets are missing or wrong in your GitHub repo, the token doesn't have **Write** access, or `images:` in `quakewatch-cd.yaml` still says `michaelgoncharov0`. See [Step 1](#step-1--make-your-own-copy-of-the-repo). |
 | **`tunnel.sh` says "Address already in use"** | An old tunnel is still open. Close that terminal, or find it with `lsof -i :8080`. |
 | **`terraform apply` fails with `error asking for approval: EOF`** | Run it in a normal terminal so you can type `yes`. |
