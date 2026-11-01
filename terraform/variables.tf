@@ -17,9 +17,22 @@ variable "vpc_cidr" {
 }
 
 variable "instance_type" {
+  # t3a.large = 2 vCPU, 8 GB RAM (AMD). Same CPU count as t3.medium but twice the memory,
+  # which Argo CD + Prometheus + Grafana + Alertmanager need. t3a is ~10% cheaper than t3.
   description = "EC2 instance type for the k3s node"
   type        = string
-  default     = "t3.medium"
+  default     = "t3a.large"
+}
+
+variable "use_spot" {
+  # Spot = AWS's spare capacity, ~60% cheaper than normal (on-demand) pricing.
+  # The catch: AWS can take the server back with 2 minutes' warning when it needs the
+  # capacity. The server is then STOPPED (not deleted) and started again automatically when
+  # capacity returns - everything on its disk is kept, but it gets a new public IP.
+  # Set to false for a normal on-demand server that is never interrupted.
+  description = "Run the k3s node as a Spot instance (much cheaper, can be interrupted)"
+  type        = bool
+  default     = true
 }
 
 variable "public_key_path" {
