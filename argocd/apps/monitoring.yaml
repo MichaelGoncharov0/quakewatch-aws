@@ -46,7 +46,13 @@ spec:
               cpu: 50m
               memory: 128Mi
             limits:
-              memory: 256Mi
+              memory: 512Mi
+          # On a small, busy node Grafana's first start (DB migrations + provisioning the
+          # bundled dashboards) takes longer than the default liveness window (~160s),
+          # so it was killed mid-startup and crash-looped. Allow up to ~6 minutes.
+          livenessProbe:
+            initialDelaySeconds: 60
+            failureThreshold: 30
 
         # EC2 instance metrics: CPU, memory, disk, network of the server itself
         prometheus-node-exporter:
